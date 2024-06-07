@@ -6,7 +6,7 @@ use tsdns::*;
 
 fn main() -> Result<()> {
     let conf = Config::parse();
-    let socket = UdpSocket::bind((conf.address, conf.port))?;
+    let socket = UdpSocket::bind(conf.bind)?;
 
     loop {
         match handle_query(&socket, &conf) {

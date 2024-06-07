@@ -1,7 +1,7 @@
 pub mod conf;
 
 use std::net::{Ipv4Addr, Ipv6Addr};
-use std::net::{ToSocketAddrs, UdpSocket};
+use std::net::{SocketAddrV4, UdpSocket};
 
 use conf::Config;
 
@@ -747,6 +747,21 @@ impl DnsPacket {
     }
 }
 
+fn proxy(conf: &Config, query: &DnsPacket) -> Result<DnsPacket> {
+    let mut req_buffer = BytePacketBuffer::new();
+    let mut res_buffer = BytePacketBuffer::new();
+
+    query.clone().write(&mut req_buffer)?;
+
+    let socket = UdpSocket::bind(SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, 0))?;
+    socket.send_to(&req_buffer.buf[..req_buffer.pos], conf.upstream)?;
+    eprintln!("waiting");
+    socket.recv(&mut res_buffer.buf)?;
+    eprintln!("reading");
+
+    DnsPacket::from_buffer(&mut res_buffer)
+}
+
 pub fn handle_query(socket: &UdpSocket, conf: &Config) -> Result<()> {
     let mut req_buffer = BytePacketBuffer::new();
     let (_, src) = socket.recv_from(&mut req_buffer.buf)?;
@@ -759,49 +774,51 @@ pub fn handle_query(socket: &UdpSocket, conf: &Config) -> Result<()> {
     packet.header.recursion_available = true;
     packet.header.response = true;
 
-    if let Some(question) = request.questions.pop() {
+    if let Some(question) = request.questions.first().cloned() {
         println!("Received query: {:?}", question);
 
         match question.qtype {
             QueryType::AAAA => {
                 packet.questions.push(question.clone());
 
-                let ipv4 =
-                    format!("{}:0", question.name)
-                        .to_socket_addrs()
-                        .and_then(|mut addrs| {
-                            addrs
-                                .find_map(|i| match i.ip() {
-                                    std::net::IpAddr::V4(v4) => Some(v4),
-                                    _ => None,
-                                })
-                                .ok_or(std::io::Error::new(
-                                    std::io::ErrorKind::Other,
-                                    "No IPv4 address found",
-                                ))
-                        });
-                match ipv4 {
-                    Ok(ipv4) => {
-                        println!("Resolved ipv4: {:?}", ipv4);
-                        let ipv4 = ipv4.octets();
-                        // https://tailscale.com/kb/1201/4via6-subnets#how-it-works
-                        let addr = Ipv6Addr::from([
-                            0xfd7a as u16,
-                            0x115c,
-                            0xa1e0,
-                            0xb1a,
-                            0,
-                            conf.tailscale_site_id,
-                            (ipv4[0] as u16) << 8 | ipv4[1] as u16,
-                            (ipv4[2] as u16) << 8 | ipv4[3] as u16,
-                        ]);
-                        println!("4via6 ipv6: {:?}", addr);
-                        packet.answers.push(DnsRecord::AAAA {
-                            domain: question.name.clone(),
-                            ttl: 60,
-                            addr,
-                        });
-                        packet.header.rescode = ResultCode::NOERROR;
+                let mut proxy_request = request.clone();
+                proxy_request.questions[0].qtype = QueryType::A;
+
+                let res = proxy(conf, &proxy_request);
+
+                match res {
+                    Ok(ans) => {
+                        println!("Upstream answer: {:?}", ans.answers);
+
+                        let ipv4s = ans
+                            .answers
+                            .iter()
+                            .filter_map(|record| match record.clone() {
+                                DnsRecord::A { domain, addr, ttl } => Some((domain, addr, ttl)),
+                                _ => None,
+                            });
+
+                        for (domain, ipv4_addr, ttl) in ipv4s {
+                            let ipv4 = ipv4_addr.octets();
+                            // https://tailscale.com/kb/1201/4via6-subnets#how-it-works
+                            let ipv6_addr = Ipv6Addr::from([
+                                0xfd7a as u16,
+                                0x115c,
+                                0xa1e0,
+                                0xb1a,
+                                0,
+                                conf.tailscale_site_id,
+                                (ipv4[0] as u16) << 8 | ipv4[1] as u16,
+                                (ipv4[2] as u16) << 8 | ipv4[3] as u16,
+                            ]);
+                            println!("4via6: {:?} -> {:?}", ipv4_addr, ipv6_addr);
+                            packet.answers.push(DnsRecord::AAAA {
+                                domain,
+                                ttl,
+                                addr: ipv6_addr,
+                            });
+                        }
+                        packet.header.rescode = ans.header.rescode;
                     }
                     Err(err) => {
                         eprintln!("Failed to resolve query: {}", err);
