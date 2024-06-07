@@ -793,7 +793,7 @@ pub fn handle_query(socket: &UdpSocket, conf: &Config) -> Result<()> {
                             0,
                             conf.tailscale_site_id,
                             (ipv4[0] as u16) << 8 | ipv4[1] as u16,
-                            (ipv4[0] as u16) << 8 | ipv4[1] as u16,
+                            (ipv4[2] as u16) << 8 | ipv4[3] as u16,
                         ]);
                         println!("4via6 ipv6: {:?}", addr);
                         packet.answers.push(DnsRecord::AAAA {
