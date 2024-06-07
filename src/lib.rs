@@ -755,9 +755,7 @@ fn proxy(conf: &Config, query: &DnsPacket) -> Result<DnsPacket> {
 
     let socket = UdpSocket::bind(SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, 0))?;
     socket.send_to(&req_buffer.buf[..req_buffer.pos], conf.upstream)?;
-    eprintln!("waiting");
     socket.recv(&mut res_buffer.buf)?;
-    eprintln!("reading");
 
     DnsPacket::from_buffer(&mut res_buffer)
 }
@@ -774,14 +772,19 @@ pub fn handle_query(socket: &UdpSocket, conf: &Config) -> Result<()> {
     packet.header.recursion_available = true;
     packet.header.response = true;
 
-    if let Some(question) = request.questions.first().cloned() {
+    if let Some(question) = request.questions.pop() {
         println!("Received query: {:?}", question);
 
         match question.qtype {
             QueryType::AAAA => {
                 packet.questions.push(question.clone());
 
-                let mut proxy_request = request.clone();
+                let mut proxy_request = DnsPacket::new();
+                proxy_request.header.id = request.header.id;
+                proxy_request.header.recursion_desired = true;
+                proxy_request.header.recursion_available = true;
+                proxy_request.header.questions = 1;
+                proxy_request.questions.push(question.clone());
                 proxy_request.questions[0].qtype = QueryType::A;
 
                 let res = proxy(conf, &proxy_request);
