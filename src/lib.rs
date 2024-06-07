@@ -774,11 +774,10 @@ pub fn handle_query(socket: &UdpSocket, conf: &Config) -> Result<()> {
 
     if let Some(question) = request.questions.pop() {
         println!("Received query: {:?}", question);
+        packet.questions.push(question.clone());
 
         match question.qtype {
             QueryType::AAAA => {
-                packet.questions.push(question.clone());
-
                 let mut proxy_request = DnsPacket::new();
                 proxy_request.header.id = request.header.id;
                 proxy_request.header.recursion_desired = true;
