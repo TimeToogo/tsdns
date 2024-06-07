@@ -7,11 +7,11 @@ Simple DNS proxy that maps private IPv4 to tailscale 4via6 IPv6 addresses.
 ## Usage
 
 ```
-Usage: tsdns [OPTIONS] --tailscale-site-id <TAILSCALE_SITE_ID>
+Usage: tsdns [OPTIONS] --upstream <UPSTREAM> --tailscale-site-id <TAILSCALE_SITE_ID>
 
 Options:
-  -a, --address <ADDRESS>                      [default: 0.0.0.0]
-  -p, --port <PORT>                            [default: 2053]
+  -b, --bind <BIND>                            [default: 0.0.0.0:2053]
+  -u, --upstream <UPSTREAM>                    
   -t, --tailscale-site-id <TAILSCALE_SITE_ID>  
   -h, --help                                   Print help
 ```
