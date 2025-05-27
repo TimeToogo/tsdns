@@ -810,7 +810,15 @@ pub fn handle_query(socket: &UdpSocket, conf: &Config) -> Result<()> {
                                 _ => None,
                             });
 
-                        for (domain, ipv4_addr, ttl) in ipv4s {
+                        for (mut domain, ipv4_addr, ttl) in ipv4s {
+                            for (cname, target) in &conf.cnames {
+                                if domain == *target {
+                                    println!("Answer CNAME match: {} -> {}", target, cname);
+                                    domain = cname.clone();
+                                    break;
+                                }
+                            }
+
                             let ipv4 = ipv4_addr.octets();
                             // https://tailscale.com/kb/1201/4via6-subnets#how-it-works
                             let ipv6_addr = Ipv6Addr::from([
