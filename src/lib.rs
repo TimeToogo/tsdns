@@ -778,12 +778,22 @@ pub fn handle_query(socket: &UdpSocket, conf: &Config) -> Result<()> {
 
         match question.qtype {
             QueryType::AAAA => {
+                let mut question = question.clone();
+
+                for (known_cname, target) in &conf.cnames {
+                    if question.name == *known_cname {
+                        println!("CNAME match: {} -> {}", known_cname, target);
+                        question.name = target.clone();
+                        break;
+                    }
+                }
+
                 let mut proxy_request = DnsPacket::new();
                 proxy_request.header.id = request.header.id;
                 proxy_request.header.recursion_desired = true;
                 proxy_request.header.recursion_available = true;
                 proxy_request.header.questions = 1;
-                proxy_request.questions.push(question.clone());
+                proxy_request.questions.push(question);
                 proxy_request.questions[0].qtype = QueryType::A;
 
                 let res = proxy(conf, &proxy_request);
