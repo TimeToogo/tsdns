@@ -779,11 +779,14 @@ pub fn handle_query(socket: &UdpSocket, conf: &Config) -> Result<()> {
         match question.qtype {
             QueryType::AAAA => {
                 let mut question = question.clone();
+                let mut original_name = question.name.clone();
+                let mut replacement = None;
 
                 for (known_cname, target) in &conf.cnames {
                     if question.name == *known_cname {
                         println!("CNAME match: {} -> {}", known_cname, target);
                         question.name = target.clone();
+                        replacement = Some(target.clone());
                         break;
                     }
                 }
@@ -811,12 +814,9 @@ pub fn handle_query(socket: &UdpSocket, conf: &Config) -> Result<()> {
                             });
 
                         for (mut domain, ipv4_addr, ttl) in ipv4s {
-                            for (cname, target) in &conf.cnames {
-                                if domain == *target {
-                                    println!("Answer CNAME match: {} -> {}", target, cname);
-                                    domain = cname.clone();
-                                    break;
-                                }
+                            if replacement.as_ref().is_some_and(|target| &domain == target) {
+                                println!("Answer CNAME match: {} -> {}", replacement.as_ref().unwrap(), original_name);
+                                domain = original_name.clone();
                             }
 
                             let ipv4 = ipv4_addr.octets();
