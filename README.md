@@ -13,6 +13,7 @@ Options:
   -b, --bind <BIND>                            [default: 0.0.0.0:2053]
   -u, --upstream <UPSTREAM>                    
   -t, --tailscale-site-id <TAILSCALE_SITE_ID>  
+  -c, --cnames <KEY=VALUE>                     
   -h, --help                                   Print help
 ```
 

@@ -779,7 +779,7 @@ pub fn handle_query(socket: &UdpSocket, conf: &Config) -> Result<()> {
         match question.qtype {
             QueryType::AAAA => {
                 let mut question = question.clone();
-                let mut original_name = question.name.clone();
+                let original_name = question.name.clone();
                 let mut replacement = None;
 
                 for (known_cname, target) in &conf.cnames {
