@@ -4,6 +4,10 @@ use clap::Parser;
 
 /// Parses key-value pairs in the format "KEY=VALUE,KEY2=VALUE2".
 fn parse_key_val(s: &str) -> Result<HashMap<String, String>, String> {
+    if s.trim().is_empty() {
+        return Ok(HashMap::new());
+    }
+
     s.split(',')
         .map(|pair| {
             let mut parts = pair.splitn(2, '=');
@@ -24,6 +28,12 @@ pub struct Config {
     pub upstream: SocketAddr,
     #[arg(short, long)]
     pub tailscale_site_id: u16,
-    #[arg(short, long, value_parser = parse_key_val, value_name = "KEY=VALUE")]
+    #[arg(
+        short,
+        long,
+        default_value = "",
+        value_parser = parse_key_val,
+        value_name = "KEY=VALUE"
+    )]
     pub cnames: HashMap<String, String>,
 }
