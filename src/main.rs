@@ -8,17 +8,16 @@ fn main() -> Result<()> {
     let conf = Config::parse();
     if conf.tcp {
         let listener = TcpListener::bind(conf.bind)?;
-        // Bound concurrent connections while allowing pooled connections to be reused.
+        // Each connection can wait for its next query independently.
         std::thread::scope(|scope| {
-            for _ in 0..8 {
-                scope.spawn(|| {
-                    for stream in listener.incoming() {
-                        let result = stream
-                            .map_err(Error::from)
-                            .and_then(|mut stream| handle_tcp(&mut stream, &conf));
-                        if let Err(err) = result {
-                            eprintln!("TCP connection failed: {err}");
-                        }
+            for stream in listener.incoming() {
+                let conf = &conf;
+                scope.spawn(move || {
+                    let result = stream
+                        .map_err(Error::from)
+                        .and_then(|mut stream| handle_tcp(&mut stream, conf));
+                    if let Err(err) = result {
+                        eprintln!("TCP connection failed: {err}");
                     }
                 });
             }
