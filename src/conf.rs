@@ -28,6 +28,9 @@ pub struct Config {
     pub upstream: SocketAddr,
     #[arg(short, long)]
     pub tailscale_site_id: u16,
+    /// Use TCP for both incoming queries and upstream lookups.
+    #[arg(long)]
+    pub tcp: bool,
     #[arg(
         short,
         long,

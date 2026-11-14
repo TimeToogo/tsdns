@@ -1,8 +1,11 @@
 pub mod conf;
 
 use std::collections::HashMap;
+use std::io::{ErrorKind, Read, Write};
+use std::net::TcpStream;
 use std::net::{Ipv4Addr, Ipv6Addr};
 use std::net::{SocketAddrV4, UdpSocket};
+use std::time::Duration;
 
 use conf::Config;
 
@@ -10,15 +13,19 @@ pub type Error = Box<dyn std::error::Error>;
 pub type Result<T> = std::result::Result<T, Error>;
 
 pub struct BytePacketBuffer {
-    pub buf: [u8; 512],
+    pub buf: Vec<u8>,
     pub pos: usize,
     names: HashMap<String, u16>,
 }
 
 impl BytePacketBuffer {
     pub fn new() -> BytePacketBuffer {
+        Self::with_size(512)
+    }
+
+    fn with_size(size: usize) -> BytePacketBuffer {
         BytePacketBuffer {
-            buf: [0; 512],
+            buf: vec![0; size],
             pos: 0,
             names: HashMap::new(),
         }
@@ -29,19 +36,20 @@ impl BytePacketBuffer {
     }
 
     fn step(&mut self, steps: usize) -> Result<()> {
-        self.pos += steps;
-
-        Ok(())
+        self.seek(self.pos + steps)
     }
 
     fn seek(&mut self, pos: usize) -> Result<()> {
+        if pos > self.buf.len() {
+            return Err("End of buffer".into());
+        }
         self.pos = pos;
 
         Ok(())
     }
 
     fn read(&mut self) -> Result<u8> {
-        if self.pos >= 512 {
+        if self.pos >= self.buf.len() {
             return Err("End of buffer".into());
         }
         let res = self.buf[self.pos];
@@ -51,14 +59,14 @@ impl BytePacketBuffer {
     }
 
     fn get(&mut self, pos: usize) -> Result<u8> {
-        if pos >= 512 {
+        if pos >= self.buf.len() {
             return Err("End of buffer".into());
         }
         Ok(self.buf[pos])
     }
 
     fn get_range(&mut self, start: usize, len: usize) -> Result<&[u8]> {
-        if start + len >= 512 {
+        if start + len > self.buf.len() {
             return Err("End of buffer".into());
         }
         Ok(&self.buf[start..start + len as usize])
@@ -140,7 +148,7 @@ impl BytePacketBuffer {
     }
 
     fn write(&mut self, val: u8) -> Result<()> {
-        if self.pos >= 512 {
+        if self.pos >= self.buf.len() {
             return Err("End of buffer".into());
         }
         self.buf[self.pos] = val;
@@ -175,7 +183,7 @@ impl BytePacketBuffer {
         if let Some(&offset) = self.names.get(qname) {
             return self.write_u16(0xc000 | offset);
         }
-        let offset = self.pos as u16;
+        let offset = self.pos;
         for label in qname.split('.') {
             let len = label.len();
             if len > 0x34 {
@@ -189,7 +197,10 @@ impl BytePacketBuffer {
         }
 
         self.write_u8(0)?;
-        self.names.insert(qname.to_owned(), offset);
+        // DNS compression pointers have a 14-bit offset, even over TCP.
+        if offset < 0x4000 {
+            self.names.insert(qname.to_owned(), offset as u16);
+        }
 
         Ok(())
     }
@@ -756,7 +767,64 @@ impl DnsPacket {
     }
 }
 
+fn read_tcp_packet(stream: &mut TcpStream) -> Result<Option<DnsPacket>> {
+    let mut length = [0; 2];
+    if stream.read(&mut length[..1])? == 0 {
+        return Ok(None);
+    }
+    stream.read_exact(&mut length[1..])?;
+    let mut buffer = BytePacketBuffer::with_size(u16::from_be_bytes(length) as usize);
+    stream.read_exact(&mut buffer.buf)?;
+    Ok(Some(DnsPacket::from_buffer(&mut buffer)?))
+}
+
+fn write_tcp_packet(stream: &mut TcpStream, mut packet: DnsPacket) -> Result<()> {
+    let mut buffer = BytePacketBuffer::with_size(u16::MAX as usize);
+    packet.write(&mut buffer)?;
+    stream.write_all(&(buffer.pos as u16).to_be_bytes())?;
+    stream.write_all(&buffer.buf[..buffer.pos])?;
+    Ok(())
+}
+
+pub fn handle_tcp(stream: &mut TcpStream, conf: &Config) -> Result<()> {
+    stream.set_nodelay(true)?;
+    stream.set_read_timeout(Some(Duration::from_secs(1)))?;
+    stream.set_write_timeout(Some(Duration::from_secs(1)))?;
+    loop {
+        let request = match read_tcp_packet(stream) {
+            Ok(Some(request)) => request,
+            Ok(None) => return Ok(()),
+            Err(err)
+                if err.downcast_ref::<std::io::Error>().is_some_and(|err| {
+                    matches!(err.kind(), ErrorKind::WouldBlock | ErrorKind::TimedOut)
+                }) =>
+            {
+                return Ok(())
+            }
+            Err(err) => return Err(err),
+        };
+        write_tcp_packet(stream, answer(request, conf))?;
+    }
+}
+
 fn proxy(conf: &Config, query: &DnsPacket) -> Result<DnsPacket> {
+    if conf.tcp {
+        let timeout = Duration::from_secs(1);
+        let mut stream = TcpStream::connect_timeout(&conf.upstream, timeout)?;
+        stream.set_nodelay(true)?;
+        stream.set_read_timeout(Some(timeout))?;
+        stream.set_write_timeout(Some(timeout))?;
+        write_tcp_packet(&mut stream, query.clone())?;
+        let reply = read_tcp_packet(&mut stream)?.ok_or("Upstream closed without a reply")?;
+        if reply.header.id != query.header.id
+            || !reply.header.response
+            || reply.header.truncated_message
+            || reply.questions != query.questions
+        {
+            return Err("Invalid or truncated upstream TCP reply".into());
+        }
+        return Ok(reply);
+    }
     let mut req_buffer = BytePacketBuffer::new();
     let mut res_buffer = BytePacketBuffer::new();
 
@@ -773,8 +841,15 @@ pub fn handle_query(socket: &UdpSocket, conf: &Config) -> Result<()> {
     let mut req_buffer = BytePacketBuffer::new();
     let (_, src) = socket.recv_from(&mut req_buffer.buf)?;
 
-    let mut request = DnsPacket::from_buffer(&mut req_buffer)?;
+    let request = DnsPacket::from_buffer(&mut req_buffer)?;
+    let mut packet = answer(request, conf);
+    let mut res_buffer = BytePacketBuffer::new();
+    packet.write(&mut res_buffer)?;
+    socket.send_to(&res_buffer.buf[..res_buffer.pos], src)?;
+    Ok(())
+}
 
+fn answer(mut request: DnsPacket, conf: &Config) -> DnsPacket {
     let mut packet = DnsPacket::new();
     packet.header.id = request.header.id;
     packet.header.recursion_desired = true;
@@ -870,13 +945,5 @@ pub fn handle_query(socket: &UdpSocket, conf: &Config) -> Result<()> {
         packet.header.rescode = ResultCode::FORMERR;
     }
 
-    let mut res_buffer = BytePacketBuffer::new();
-    packet.write(&mut res_buffer)?;
-
-    let len = res_buffer.pos();
-    let data = res_buffer.get_range(0, len)?;
-
-    socket.send_to(data, src)?;
-
-    Ok(())
+    packet
 }
