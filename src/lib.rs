@@ -780,15 +780,10 @@ pub fn handle_query(socket: &UdpSocket, conf: &Config) -> Result<()> {
             QueryType::AAAA => {
                 let mut question = question.clone();
                 let original_name = question.name.clone();
-                let mut replacement = None;
 
-                for (known_cname, target) in &conf.cnames {
-                    if question.name == *known_cname {
-                        println!("CNAME match: {} -> {}", known_cname, target);
-                        question.name = target.clone();
-                        replacement = Some(target.clone());
-                        break;
-                    }
+                if let Some(target) = conf.cnames.get(&original_name) {
+                    println!("CNAME match: {} -> {}", original_name, target);
+                    question.name = target.clone();
                 }
 
                 let mut proxy_request = DnsPacket::new();
@@ -805,20 +800,27 @@ pub fn handle_query(socket: &UdpSocket, conf: &Config) -> Result<()> {
                     Ok(ans) => {
                         println!("Upstream answer: {:?}", ans.answers);
 
-                        let ipv4s = ans
+                        // Flattened addresses must not outlive any alias in the answer.
+                        let ttl = ans
                             .answers
                             .iter()
-                            .filter_map(|record| match record.clone() {
-                                DnsRecord::A { domain, addr, ttl } => Some((domain, addr, ttl)),
-                                _ => None,
-                            });
+                            .map(|record| match record {
+                                DnsRecord::A { ttl, .. }
+                                | DnsRecord::AAAA { ttl, .. }
+                                | DnsRecord::CNAME { ttl, .. }
+                                | DnsRecord::NS { ttl, .. }
+                                | DnsRecord::MX { ttl, .. }
+                                | DnsRecord::UNKNOWN { ttl, .. } => *ttl,
+                            })
+                            .min()
+                            .unwrap_or(0);
 
-                        for (mut domain, ipv4_addr, ttl) in ipv4s {
-                            if replacement.as_ref().is_some_and(|target| &domain == target) {
-                                println!("Answer CNAME match: {} -> {}", replacement.as_ref().unwrap(), original_name);
-                                domain = original_name.clone();
-                            }
+                        let ipv4s = ans.answers.iter().filter_map(|record| match record {
+                            DnsRecord::A { addr, .. } => Some(*addr),
+                            _ => None,
+                        });
 
+                        for ipv4_addr in ipv4s {
                             let ipv4 = ipv4_addr.octets();
                             // https://tailscale.com/kb/1201/4via6-subnets#how-it-works
                             let ipv6_addr = Ipv6Addr::from([
@@ -833,7 +835,7 @@ pub fn handle_query(socket: &UdpSocket, conf: &Config) -> Result<()> {
                             ]);
                             println!("4via6: {:?} -> {:?}", ipv4_addr, ipv6_addr);
                             packet.answers.push(DnsRecord::AAAA {
-                                domain,
+                                domain: original_name.clone(),
                                 ttl,
                                 addr: ipv6_addr,
                             });
