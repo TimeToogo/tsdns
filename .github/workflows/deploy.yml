@@ -45,12 +45,14 @@ jobs:
           name: tsdns-${{matrix.target}}
           path: target/${{matrix.target}}/release/tsdns${{matrix.suffix}}
       - uses: aws-actions/configure-aws-credentials@v1
+        if: github.ref == 'refs/heads/master'
         with:
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: us-east-1
       # Deploy artifact to https://tsdns.elliotlevin.dev
       - name: Deploy to S3
+        if: github.ref == 'refs/heads/master'
         run: >
           aws s3 cp target/${{matrix.target}}/release/tsdns${{matrix.suffix}} s3://tsdns/tsdns-${{matrix.target}}${{matrix.suffix}}
           --acl=public-read 
@@ -58,5 +60,6 @@ jobs:
           --metadata-directive REPLACE
         shell: bash
       - name: Invalidate CloudFront
+        if: github.ref == 'refs/heads/master'
         run: aws cloudfront create-invalidation --distribution-id=E29YYL1CG6CG08 --paths '/*'
       
