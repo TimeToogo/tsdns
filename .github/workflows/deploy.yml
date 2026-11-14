@@ -1,7 +1,12 @@
 name: build
 
 on:
-  - push
+  push:
+    branches: [master]
+
+permissions:
+  contents: read
+  id-token: write
 
 jobs:
   build:
@@ -29,34 +34,34 @@ jobs:
             target: x86_64-pc-windows-msvc
             suffix: .exe
     steps:
-      - uses: actions/checkout@v2
-      - uses: actions-rs/toolchain@v1
+      - uses: actions/checkout@0717577d45739eb3c851188b29f50ed6c0b2194e # v2
+      - uses: actions-rs/toolchain@16499b5e05bf2e26879000db0c1d13f7e13fa3af # v1
         with:
           toolchain: stable
           target: ${{matrix.target}}
           override: true
-      - uses: actions-rs/cargo@v1
+      - uses: actions-rs/cargo@844f36862e911db73fe0815f00a4a2602c279505 # v1
         with:
           command: build
           use-cross: ${{matrix.cross}}
-          args: --release --all-features --target ${{matrix.target}}
-      - uses: actions/upload-artifact@v4
+          args: --release --locked --all-features --target ${{matrix.target}}
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: tsdns-${{matrix.target}}
           path: target/${{matrix.target}}/release/tsdns${{matrix.suffix}}
-      - uses: aws-actions/configure-aws-credentials@v1
+      - uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
         with:
-          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          role-to-assume: arn:aws:iam::059160323628:role/tsdns-github-deploy
+          role-duration-seconds: 900
+          allowed-account-ids: "059160323628"
           aws-region: us-east-1
       # Deploy artifact to https://tsdns.elliotlevin.dev
       - name: Deploy to S3
         run: >
           aws s3 cp target/${{matrix.target}}/release/tsdns${{matrix.suffix}} s3://tsdns/tsdns-${{matrix.target}}${{matrix.suffix}}
-          --acl=public-read 
+          --acl=public-read
           --cache-control max-age=31536000
           --metadata-directive REPLACE
         shell: bash
       - name: Invalidate CloudFront
         run: aws cloudfront create-invalidation --distribution-id=E29YYL1CG6CG08 --paths '/*'
-      
