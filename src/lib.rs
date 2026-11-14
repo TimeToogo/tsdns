@@ -894,19 +894,23 @@ fn answer(mut request: DnsPacket, conf: &Config) -> DnsPacket {
                         });
 
                         for ipv4_addr in ipv4s {
-                            let ipv4 = ipv4_addr.octets();
                             // https://tailscale.com/kb/1201/4via6-subnets#how-it-works
-                            let ipv6_addr = Ipv6Addr::from([
-                                0xfd7a as u16,
-                                0x115c,
-                                0xa1e0,
-                                0xb1a,
-                                0,
-                                conf.tailscale_site_id,
-                                (ipv4[0] as u16) << 8 | ipv4[1] as u16,
-                                (ipv4[2] as u16) << 8 | ipv4[3] as u16,
-                            ]);
-                            println!("4via6: {:?} -> {:?}", ipv4_addr, ipv6_addr);
+                            let prefix = conf.nat64_prefix.unwrap_or_else(|| {
+                                Ipv6Addr::new(
+                                    0xfd7a,
+                                    0x115c,
+                                    0xa1e0,
+                                    0xb1a,
+                                    0,
+                                    conf.tailscale_site_id.unwrap_or(0),
+                                    0,
+                                    0,
+                                )
+                            });
+                            let ipv6_addr = Ipv6Addr::from(
+                                u128::from(prefix) | u128::from(u32::from(ipv4_addr)),
+                            );
+                            println!("Synthesized: {:?} -> {:?}", ipv4_addr, ipv6_addr);
                             packet.answers.push(DnsRecord::AAAA {
                                 domain: original_name.clone(),
                                 ttl,
