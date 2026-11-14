@@ -1,5 +1,6 @@
 pub mod conf;
 
+use std::collections::HashMap;
 use std::net::{Ipv4Addr, Ipv6Addr};
 use std::net::{SocketAddrV4, UdpSocket};
 
@@ -11,6 +12,7 @@ pub type Result<T> = std::result::Result<T, Error>;
 pub struct BytePacketBuffer {
     pub buf: [u8; 512],
     pub pos: usize,
+    names: HashMap<String, u16>,
 }
 
 impl BytePacketBuffer {
@@ -18,6 +20,7 @@ impl BytePacketBuffer {
         BytePacketBuffer {
             buf: [0; 512],
             pos: 0,
+            names: HashMap::new(),
         }
     }
 
@@ -168,6 +171,11 @@ impl BytePacketBuffer {
     }
 
     fn write_qname(&mut self, qname: &str) -> Result<()> {
+        // Repeated owners use a pointer instead of filling the UDP packet with names.
+        if let Some(&offset) = self.names.get(qname) {
+            return self.write_u16(0xc000 | offset);
+        }
+        let offset = self.pos as u16;
         for label in qname.split('.') {
             let len = label.len();
             if len > 0x34 {
@@ -181,6 +189,7 @@ impl BytePacketBuffer {
         }
 
         self.write_u8(0)?;
+        self.names.insert(qname.to_owned(), offset);
 
         Ok(())
     }
