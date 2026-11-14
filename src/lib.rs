@@ -798,7 +798,8 @@ pub fn handle_tcp(stream: &mut TcpStream, conf: &Config) -> Result<()> {
 fn proxy(conf: &Config, query: &DnsPacket) -> Result<DnsPacket> {
     if conf.tcp {
         let timeout = Duration::from_secs(1);
-        let mut stream = TcpStream::connect_timeout(&conf.upstream, timeout)?;
+        // A one-second deadline can expire before TCP retries its first SYN.
+        let mut stream = TcpStream::connect_timeout(&conf.upstream, Duration::from_secs(3))?;
         stream.set_nodelay(true)?;
         stream.set_read_timeout(Some(timeout))?;
         stream.set_write_timeout(Some(timeout))?;
