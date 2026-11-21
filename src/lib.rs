@@ -820,7 +820,7 @@ fn proxy(conf: &Config, query: &DnsPacket) -> Result<DnsPacket> {
     query.clone().write(&mut req_buffer)?;
 
     let socket = UdpSocket::bind(SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, 0))?;
-    socket.set_read_timeout(Some(Duration::from_secs(1)))?;
+    socket.set_read_timeout(Some(Duration::from_secs(5)))?;
     socket.send_to(&req_buffer.buf[..req_buffer.pos], conf.upstream)?;
     socket.recv(&mut res_buffer.buf)?;
 
